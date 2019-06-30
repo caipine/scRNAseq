@@ -1,0 +1,131 @@
+
+conda install -c r r-rcurl
+conda install -c bioconda bioconductor-scater 
+conda install -c bioconda bioconductor-scran
+conda install -c bioconda bioconductor-biomart 
+conda install -c bioconda bioconductor-rbgl 
+conda install -c bioconda bioconductor-rgraphviz 
+conda install -c r r-gplots 
+conda install -c conda-forge r-rtsne 
+conda install -c bioconda r-cellassign 
+conda install -c bioconda bioconductor-complexheatmap
+conda install -c conda-forge r-ggsci 
+
+conda create -n tf tensorflow
+conda activate tf
+
+conda install -c conda-forge r-ggsci
+conda install -c r r-gdata 
+
+conda install -c bioconda bioconductor-scrnaseq 
+conda install -c bioconda bioconductor-org.mm.eg.db
+
+
+#####################################################
+
+library(tensorflow)
+library(SingleCellExperiment)
+library(cellassign)
+data(example_sce)
+data(example_rho)
+s <- sizeFactors(example_sce)
+fit <- cellassign(exprs_obj = example_sce, 
+                  marker_gene_info = example_rho, 
+                  s = s, 
+                  learning_rate = 1e-2, 
+                  shrinkage = TRUE,
+                  verbose = FALSE)
+fit$cell_type
+
+
+##################################
+
+library(R.utils)
+library(gdata)
+library(SingleCellExperiment)
+library(scran)
+
+all.counts <- read.xls("GSE61533_HTSEQ_count_results.xls", sheet=1, header=TRUE, row.names=1)
+library(scater)
+sce <- SingleCellExperiment(assays = list(counts =as.matrix(all.counts)))
+sce <- calculateQCMetrics(sce, feature_controls=list(ERCC=is.spike, Mt=is.mito))
+isSpike(sce, "ERCC") <- grepl("^ERCC-", rownames(sce))
+sce
+
+
+
+par(mfrow=c(1,2))
+hist(sce$total_counts/1e6, xlab="Library sizes (millions)", main="",
+     breaks=20, col="grey80", ylab="Number of cells")
+hist(sce$total_features_by_counts, xlab="Number of expressed genes", main="",
+     breaks=20, col="grey80", ylab="Number of cells")
+
+libsize.drop <- isOutlier(sce$total_counts, nmads=3, type="lower", log=TRUE)
+feature.drop <- isOutlier(sce$total_features_by_counts, nmads=3, type="lower", log=TRUE)
+
+
+colnames(colData(sce))
+
+
+par(mfrow=c(1,2))
+hist(sce$pct_counts_Mt, xlab="Mitochondrial proportion (%)",
+     ylab="Number of cells", breaks=20, main="", col="grey80")
+hist(sce$pct_counts_ERCC, xlab="ERCC proportion (%)",
+     ylab="Number of cells", breaks=20, main="", col="grey80")
+
+
+mito.drop <- isOutlier(sce$pct_counts_Mt, nmads=3, type="higher")
+spike.drop <- isOutlier(sce$pct_counts_ERCC, nmads=3, type="higher")
+
+
+sce <- sce[,!(libsize.drop | feature.drop | mito.drop | spike.drop)]
+data.frame(ByLibSize=sum(libsize.drop), ByFeature=sum(feature.drop),
+     ByMito=sum(mito.drop), BySpike=sum(spike.drop), Remaining=ncol(sce))
+     
+     
+???????????????????????????????????????     
+fontsize <- theme(axis.text=element_text(size=12), axis.title=element_text(size=16))
+plotPCA(sce, pca_data_input="pdata") + fontsize
+???????????????????????????????????????
+
+
+mm.pairs <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package="scran"))
+library(org.Mm.eg.db)
+anno <- select(org.Mm.eg.db, keys=rownames(sce), keytype="SYMBOL", column="ENSEMBL")
+ensembl <- anno$ENSEMBL[match(rownames(sce), anno$SYMBOL)]
+assignments <- cyclone(sce, mm.pairs, gene.names=ensembl)
+plot(assignments$score$G1, assignments$score$G2M, xlab="G1 score", ylab="G2/M score", pch=16)
+
+###################
+sce <- sce[,assignments$phases=="G1"]
+###################
+
+
+ave.counts <- rowMeans(counts(sce))
+keep <- ave.counts >= 1
+sum(keep)
+
+plotQC(sce, type = "highest-expression", n=50) + fontsize
+
+numcells <- nexprs(sce, byrow=TRUE)
+alt.keep <- numcells >= 10
+sum(alt.keep)
+
+smoothScatter(log10(ave.counts), numcells, xlab=expression(Log[10]~"average count"),
+     ylab="Number of expressing cells")
+is.ercc <- isSpike(sce, type="ERCC")
+points(log10(ave.counts[is.ercc]), numcells[is.ercc], col="red", pch=16, cex=0.5)
+
+sce <- sce[keep,]
+sce <- computeSumFactors(sce, sizes=c(20, 40, 60, 80))
+summary(sizeFactors(sce))
+plot(sizeFactors(sce), sce$total_counts/1e6, log="xy",
+     ylab="Library size (millions)", xlab="Size factor")
+     
+     sce <- computeSpikeFactors(sce, type="ERCC", general.use=FALSE)
+     sce <- normalize(sce)
+     
+     plotExplanatoryVariables(sce, variables=c("pct_counts_ERCC",
+     "log10_total_counts_ERCC")) + fontsize
+
+
